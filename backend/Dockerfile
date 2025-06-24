@@ -1,5 +1,7 @@
 FROM postgres:16
+
 ENV POSTGRES_USER=postgres
-ENV POSTGRES_PASSWORD=mipassword
-ENV POSTGRES_DB=mi_base_de_datos
+ENV POSTGRES_PASSWORD=password
+ENV POSTGRES_DB=mydatabase
+
 EXPOSE 5432
