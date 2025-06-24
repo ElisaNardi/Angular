@@ -5,11 +5,13 @@
   background-color: #f9f9f9;
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  /* padding-top: 25px; Removido o ajustado si es necesario, ya que el h2 manejará el espaciado */
 }
 
 h2 {
   color: #333;
   text-align: center;
+  margin-top: 40px; /* Aumentado el margen superior para bajar el título "Gestión de Menú" */
   margin-bottom: 25px;
   font-size: 2em;
   border-bottom: 2px solid #eee;
@@ -141,9 +143,8 @@ h2 {
   color: #dc3545;
 }
 
-/* Estilos para el botón de editar personalizado (morado) */
 .btn-edit-custom {
-  background-color: #7B6CC9; /* Color morado de la imagen */
+  background-color: #7B6CC9;
   border-color: #7B6CC9;
   color: #fff;
   transition: background-color 0.2s, border-color 0.2s;
@@ -152,12 +153,11 @@ h2 {
 }
 
 .btn-edit-custom:hover {
-  background-color: #6a5bbd; /* Un poco más oscuro al pasar el mouse */
+  background-color: #6a5bbd;
   border-color: #6a5bbd;
   color: #fff;
 }
 
-/* Estilos para el modal de confirmación en la página */
 .confirmation-overlay {
   position: fixed;
   top: 0;
@@ -168,7 +168,7 @@ h2 {
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 1050; /* Z-index alto para que esté por encima de todo */
+  z-index: 1050;
 }
 
 .confirmation-dialog {
@@ -182,15 +182,15 @@ h2 {
 }
 
 .confirmation-dialog .card-header {
-  background-color: #f8d7da; /* Un color suave para la cabecera de advertencia */
-  color: #721c24; /* Color de texto para la advertencia */
+  background-color: #f8d7da;
+  color: #721c24;
   border-bottom: 1px solid #f5c6cb;
   padding: 10px 15px;
   border-radius: 8px 8px 0 0;
 }
 
 .confirmation-dialog .card-header h3 {
-  color: #721c24; /* Asegura que el título sea del color de advertencia */
+  color: #721c24;
 }
 
 .confirmation-dialog .card-body {

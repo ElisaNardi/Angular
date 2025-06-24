@@ -16,7 +16,7 @@ const AppDataSource = new DataSource({
   entities: [Restaurant, Menu, UserEntity],
   synchronize: process.env.DB_SYNCHRONIZE === 'true',
   logging: true,
-  migrations: [__dirname + '/../migrations/**/*.ts'],
+  migrations: [__dirname + '/migrations/**/*.ts'],
 });
 
 export default AppDataSource;

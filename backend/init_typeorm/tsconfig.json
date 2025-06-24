@@ -19,6 +19,6 @@
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false
   },
-  "include": ["src/**/*"], 
-  "exclude": ["node_modules", "dist"] 
+  "include": ["src/**/*", "datasource.ts"],
+  "exclude": ["node_modules", "dist"]
 }

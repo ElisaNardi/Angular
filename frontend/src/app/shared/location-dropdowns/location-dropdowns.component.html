@@ -4,7 +4,7 @@
     <select
       id="provinceSelect"
       class="form-select"
-      [ngModel]="selectedProvinceId"
+      [(ngModel)]="selectedProvinceId"
       (ngModelChange)="onProvinceChange($event)"
       [disabled]="isLoadingProvinces"
     >
@@ -18,7 +18,7 @@
     <select
       id="citySelect"
       class="form-select"
-      [ngModel]="selectedCityId"
+      [(ngModel)]="selectedCityId"
       (ngModelChange)="onCityChange($event)"
       [disabled]="disableCity || isLoadingMunicipalities"
     >

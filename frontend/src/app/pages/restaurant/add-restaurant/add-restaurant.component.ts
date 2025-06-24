@@ -1,19 +1,24 @@
 import { Component, OnInit, OnDestroy, ViewChild, AfterViewInit } from '@angular/core';
-import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
+import { FormBuilder, FormGroup, Validators, ReactiveFormsModule, FormControl } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { Router, ActivatedRoute } from '@angular/router';
 
 import { debounceTime, distinctUntilChanged, catchError, filter, tap } from 'rxjs/operators';
-import { of, Subscription, firstValueFrom } from 'rxjs';
+import { of, Subscription, forkJoin, firstValueFrom } from 'rxjs';
 
 import { GeorefService } from '../../../services/georef.service';
-import { LocationPickerComponent, LocationSelectedEvent } from '../../../shared/location-picker/location-picker.component';
+import { LocationPickerComponent, LocationSelectedEvent, GeorefAddressDetailsFromPicker } from '../../../shared/location-picker/location-picker.component';
 import { RestaurantService, CreateRestaurantPayloadForService } from '../../../services/restaurant.service';
 import { AuthService } from '../../../services/auth.service';
+
 import { LoadingSpinnerComponent } from '../../../shared/loading-spinner/loading-spinner.component';
 import { LocationDropdownsComponent } from '../../../shared/location-dropdowns/location-dropdowns.component';
 
-import { GeorefProvince, GeorefMunicipality, GeorefDireccion } from '../../../models/georef-models';
+import {
+  GeorefProvince,
+  GeorefMunicipality,
+  GeorefDireccion
+} from '../../../models/georef-models';
 
 interface RestaurantFormValue {
   name: string;
@@ -49,7 +54,6 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
   @ViewChild(LocationDropdownsComponent) locationDropdowns!: LocationDropdownsComponent;
 
   allProvinces: GeorefProvince[] = [];
-  allMunicipalitiesForMatching: GeorefMunicipality[] = [];
 
   private subscriptions = new Subscription();
   private formListenersActive = true;
@@ -60,10 +64,10 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
   isEditMode = false;
   restaurantId: number | null = null;
 
-  selectedProvinceForDropdown: string | null = null;
-  selectedCityForDropdown: string | null = null;
-  forceLoadMunicipalitiesForDropdown = false;
-  
+  currentProvinceId: string | null = null;
+  currentCityId: string | null = null;
+  currentMunicipalityDetails: GeorefMunicipality | null = null;
+
   constructor(
     private fb: FormBuilder,
     private georefService: GeorefService,
@@ -79,9 +83,15 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
   }
 
   ngAfterViewInit(): void {
-    setTimeout(() => {
+    this.subscriptions.add(this.locationDropdowns.provincesLoaded.subscribe(provinces => {
+      this.allProvinces = provinces;
+      if (!this.isEditMode) {
+        this.loadDefaultUserCity();
+      } else if (this.restaurantId) {
+        this.loadRestaurantData(this.restaurantId);
+      }
       this.setupFormListeners();
-    }, 0);
+    }));
   }
 
   ngOnDestroy(): void {
@@ -104,55 +114,56 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
     });
   }
 
-  onProvincesLoaded(provinces: GeorefProvince[]): void {
-    this.allProvinces = provinces;
-    if (!this.isEditMode) {
-      this.loadDefaultLocationForNewRestaurant();
-    } else if (this.restaurantId) {
-      this.loadRestaurantData(this.restaurantId);
-    }
-  }
-
-  async loadDefaultLocationForNewRestaurant(): Promise<void> {
-    this.isLoading = true;
-    try {
-      const userCityId = String(this.authService.getLoggedInUserCityId());
-      let defaultMunicipality: GeorefMunicipality | undefined = undefined;
-
-      if (userCityId) {
-        this.allMunicipalitiesForMatching = await firstValueFrom(this.georefService.getMunicipalities().pipe(
+  async loadDefaultUserCity(): Promise<void> {
+    const userCityId = String(this.authService.getLoggedInUserCityId());
+    if (userCityId && this.locationDropdowns) {
+      this.isLoading = true;
+      try {
+        const allMunicipalities = await firstValueFrom(this.georefService.getMunicipalities().pipe(
           catchError(error => {
-            this.handleError('Error al cargar todos los municipios/localidades.', error);
+            this.handleError('Error al cargar todos los municipios iniciales para usuario.', error);
             return of([]);
           })
         ));
-        defaultMunicipality = this.allMunicipalitiesForMatching.find(m => m.id === userCityId);
-      }
+        const defaultMunicipality = allMunicipalities.find(m => m.id === userCityId);
 
-      if (defaultMunicipality && defaultMunicipality.centroide) {
-        const lat = defaultMunicipality.centroide.lat;
-        const lng = defaultMunicipality.centroide.lon;
-        this.locationPicker.setMapCenterAndMarker(lat, lng, 15);
-        
-        this.onLocationSelected({
-          lat: lat,
-          lng: lng,
-          zoom: this.locationPicker?.map?.getZoom() || 13,
-          georefAddress: {
+        if (defaultMunicipality && defaultMunicipality.centroide) {
+          const lat = defaultMunicipality.centroide.lat;
+          const lng = defaultMunicipality.centroide.lon;
+
+          this.locationPicker.setMapCenterAndMarker(lat, lng, 15);
+
+          const georefAddressForEvent: GeorefAddressDetailsFromPicker = {
             provinceId: defaultMunicipality.provincia.id,
             provinceName: defaultMunicipality.provincia.nombre,
             municipalityId: defaultMunicipality.id,
             municipalityName: defaultMunicipality.nombre,
             street: undefined,
             number: undefined
-          },
-          fullGeorefResponse: undefined
-        });
+          };
+
+          this.onLocationSelected({
+            lat: lat,
+            lng: lng,
+            zoom: this.locationPicker?.map?.getZoom() || 13,
+            georefAddress: georefAddressForEvent,
+            fullGeorefResponse: undefined
+          });
+
+          await this.locationDropdowns.setDropdownValues(defaultMunicipality.provincia.id, defaultMunicipality.id, false);
+
+          this.currentProvinceId = defaultMunicipality.provincia.id;
+          this.currentCityId = defaultMunicipality.id;
+          this.currentMunicipalityDetails = defaultMunicipality;
+          this.restaurantForm.get('address.province')?.setValue(this.currentProvinceId, { emitEvent: false });
+          this.restaurantForm.get('address.city')?.setValue(this.currentCityId, { emitEvent: false });
+          this.toggleAddressFields(true);
+        }
+      } catch (err: any) {
+        this.handleError('Error al cargar datos de ubicación iniciales del usuario.', err);
+      } finally {
+        this.isLoading = false;
       }
-      this.isLoading = false;
-    } catch (err: any) {
-      this.handleError('Error al cargar la ubicación predeterminada.', err);
-      this.isLoading = false;
     }
   }
 
@@ -174,6 +185,7 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
       cleaned = cleaned.replace(/\s*central(?: de)?/i, '');
       cleaned = cleaned.replace(/\s*y localidades/i, '');
       cleaned = cleaned.replace(/\s*eje vial/i, '');
+      cleaned = cleaned.replace(/\s*rural/i, '');
       cleaned = cleaned.replace(/^ciudad de\s/i, '');
       cleaned = cleaned.replace(/\s*\(.*\)$/, '');
     }
@@ -217,8 +229,8 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
           !!this.locationPicker &&
           !!streetControl?.value &&
           !!numberControl?.value &&
-          !!this.restaurantForm.get('address.province')?.value &&
-          !!this.restaurantForm.get('address.city')?.value
+          !!this.currentProvinceId &&
+          !!this.currentCityId
         )
       ).subscribe(() => {
         this.geocodeManualAddress();
@@ -226,52 +238,45 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
     );
   }
 
-  onProvinceSelected(provinceId: string | null): void {
+  onDropdownProvinceChange(provinceId: string | null): void {
+    this.currentProvinceId = provinceId;
+    this.currentCityId = null;
+    this.currentMunicipalityDetails = null;
+
     this.formListenersActive = false;
     this.restaurantForm.get('address.province')?.setValue(provinceId, { emitEvent: false });
     this.restaurantForm.get('address.city')?.setValue(null, { emitEvent: false });
-    this.selectedProvinceForDropdown = provinceId;
-    this.selectedCityForDropdown = null;
-
-    if (provinceId) {
-      const selectedProvince = this.allProvinces.find(p => p.id === provinceId);
-      if (selectedProvince && selectedProvince.centroide && this.locationPicker) {
-        this.locationPicker.setMapCenterAndMarker(selectedProvince.centroide.lat, selectedProvince.centroide.lon, 9);
-      }
-      this.toggleAddressFields(false);
-    } else {
-      this.toggleAddressFields(false);
-    }
     this.formListenersActive = true;
+
+    this.toggleAddressFields(false);
   }
 
-  onCitySelected(cityId: string | null): void {
+  onDropdownCityChange(cityId: string | null): void {
+    this.currentCityId = cityId;
+
     this.formListenersActive = false;
     this.restaurantForm.get('address.city')?.setValue(cityId, { emitEvent: false });
-    this.selectedCityForDropdown = cityId;
+    this.formListenersActive = true;
 
-    if (cityId) {
-      this.georefService.getMunicipalitiesByProvinceId(this.selectedProvinceForDropdown!).pipe(
-        catchError(error => {
-          this.handleError('Error al cargar municipios para centrar el mapa.', error);
-          return of([]);
-        })
-      ).subscribe(municipalities => {
-        const municipality = municipalities.find(m => m.id === cityId);
-        if (municipality && municipality.centroide && this.locationPicker) {
-          this.locationPicker.setMapCenterAndMarker(municipality.centroide.lat, municipality.centroide.lon, 15);
-          this.toggleAddressFields(true);
-        } else {
-          this.toggleAddressFields(false);
-          this.restaurantForm.patchValue({ address: { latitude: null, longitude: null } }, { emitEvent: false });
-        }
-        this.formListenersActive = true;
-      });
+    this.toggleAddressFields(!!cityId);
+  }
+
+  onCityDetailsSelected(municipality: GeorefMunicipality | null): void {
+    this.currentMunicipalityDetails = municipality;
+    if (municipality && municipality.centroide && this.locationPicker) {
+      const currentZoom = this.locationPicker?.map?.getZoom() || 15;
+      this.locationPicker.setMapCenterAndMarker(municipality.centroide.lat, municipality.centroide.lon, currentZoom);
     } else {
-      this.toggleAddressFields(false);
-      this.restaurantForm.patchValue({ address: { latitude: null, longitude: null } }, { emitEvent: false });
+      this.formListenersActive = false;
+      this.restaurantForm.get('address.latitude')?.setValue(null, { emitEvent: false });
+      this.restaurantForm.get('address.longitude')?.setValue(null, { emitEvent: false });
       this.formListenersActive = true;
+      this.toggleAddressFields(false);
     }
+  }
+
+  onProvincesLoaded(provinces: GeorefProvince[]): void {
+    this.allProvinces = provinces;
   }
 
   private toggleAddressFields(enable: boolean): void {
@@ -298,8 +303,10 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
 
     if (!event.fullGeorefResponse) {
       this.clearAddressFields();
-      this.selectedProvinceForDropdown = null;
-      this.selectedCityForDropdown = null;
+      await this.locationDropdowns.setDropdownValues(null, null, false);
+      this.currentProvinceId = null;
+      this.currentCityId = null;
+      this.currentMunicipalityDetails = null;
       this.toggleAddressFields(false);
       this.formListenersActive = true;
       this.restaurantForm.updateValueAndValidity();
@@ -314,8 +321,10 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
           catchError(error => {
             this.handleError('No se pudo obtener la dirección completa para esta ubicación desde el mapa.', error);
             this.clearAddressFields();
-            this.selectedProvinceForDropdown = null;
-            this.selectedCityForDropdown = null;
+            this.locationDropdowns.setDropdownValues(null, null, false);
+            this.currentProvinceId = null;
+            this.currentCityId = null;
+            this.currentMunicipalityDetails = null;
             this.toggleAddressFields(false);
             return of([]);
           })
@@ -326,8 +335,10 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
       if (!direcciones || direcciones.length === 0) {
         this.errorMessage = 'No se encontraron detalles de dirección para las coordenadas seleccionadas.';
         this.clearAddressFields();
-        this.selectedProvinceForDropdown = null;
-        this.selectedCityForDropdown = null;
+        await this.locationDropdowns.setDropdownValues(null, null, false);
+        this.currentProvinceId = null;
+        this.currentCityId = null;
+        this.currentMunicipalityDetails = null;
         this.toggleAddressFields(false);
         this.formListenersActive = true;
         this.restaurantForm.updateValueAndValidity();
@@ -338,6 +349,7 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
 
       let provinceIdToSet: string | null = null;
       let municipalityIdToSet: string | null = null;
+      let matchedMunicipalityObj: GeorefMunicipality | undefined;
 
       if (georefDireccion.provincia?.id) {
         const matchedProvinceById = this.allProvinces.find(p => p.id === georefDireccion.provincia?.id);
@@ -357,13 +369,22 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
 
       if (!provinceIdToSet) {
           this.clearAddressFields();
-          this.selectedProvinceForDropdown = null;
-          this.selectedCityForDropdown = null;
+          await this.locationDropdowns.setDropdownValues(null, null, false);
+          this.currentProvinceId = null;
+          this.currentCityId = null;
+          this.currentMunicipalityDetails = null;
           this.toggleAddressFields(false);
           this.formListenersActive = true;
           this.restaurantForm.updateValueAndValidity();
           return;
       }
+
+      const municipalitiesForProvince = await firstValueFrom(this.georefService.getMunicipalitiesByProvinceId(provinceIdToSet).pipe(
+          catchError(error => {
+              this.handleError('Error al cargar municipios para la provincia obtenida de GeoRef.', error);
+              return of([]);
+          })
+      ));
 
       let potentialNamesFromGeoRef: string[] = [];
 
@@ -396,83 +417,80 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
 
       potentialNamesFromGeoRef = Array.from(new Set(potentialNamesFromGeoRef.filter(name => name && name.trim() !== '')));
 
-      let matchedMunicipality: GeorefMunicipality | undefined;
-      const municipalitiesInProvince = await firstValueFrom(this.georefService.getMunicipalitiesByProvinceId(provinceIdToSet));
-
       if (georefDireccion.municipio?.id) {
-          matchedMunicipality = municipalitiesInProvince.find(m => m.id === georefDireccion.municipio?.id);
+          matchedMunicipalityObj = municipalitiesForProvince.find(m => m.id === georefDireccion.municipio?.id);
       }
 
-      if (!matchedMunicipality) {
+      if (!matchedMunicipalityObj) {
         for (const nameRaw of potentialNamesFromGeoRef) {
             const searchNameCleaned = this.cleanName(nameRaw, 'city');
             if (searchNameCleaned) {
-                matchedMunicipality = municipalitiesInProvince.find(
+                matchedMunicipalityObj = municipalitiesForProvince.find(
                     m => {
                         const cleanedMuniName = this.cleanName(m.nombre, 'city');
                         return cleanedMuniName?.toLowerCase() === searchNameCleaned.toLowerCase();
                     }
                 );
-                if (matchedMunicipality) {
+                if (matchedMunicipalityObj) {
                     break;
                 }
             }
         }
       }
 
-      if (!matchedMunicipality) {
-          const selectedProvinceGeoRef = this.allProvinces.find(p => p.id === provinceIdToSet);
-          const cleanedProvinceName = this.cleanName(selectedProvinceGeoRef?.nombre, 'province');
-          const capitalMunicipality = municipalitiesInProvince.find(
+      const selectedProvinceGeoRef = this.allProvinces.find(p => p.id === provinceIdToSet);
+      const cleanedProvinceName = this.cleanName(selectedProvinceGeoRef?.nombre, 'province');
+
+      if (!matchedMunicipalityObj && selectedProvinceGeoRef?.nombre) {
+          const capitalMunicipality = municipalitiesForProvince.find(
               m => this.cleanName(m.nombre, 'city')?.toLowerCase() === 'capital' ||
                    this.cleanName(m.nombre, 'city')?.toLowerCase() === cleanedProvinceName ||
                    this.cleanName(m.nombre, 'city')?.toLowerCase() === `ciudad de ${cleanedProvinceName}` ||
                    (cleanedProvinceName === 'santiago del estero' && this.cleanName(m.nombre, 'city') === 'santiago del estero')
           );
           if (capitalMunicipality) {
-              matchedMunicipality = capitalMunicipality;
+              matchedMunicipalityObj = capitalMunicipality;
           }
       }
 
-      if (!matchedMunicipality) {
+      if (!matchedMunicipalityObj) {
         for (const nameRaw of potentialNamesFromGeoRef) {
             const searchNameCleaned = this.cleanName(nameRaw, 'city');
             if (searchNameCleaned) {
-                matchedMunicipality = municipalitiesInProvince.find(m => {
+                matchedMunicipalityObj = municipalitiesForProvince.find(m => {
                     const cleanedMuniName = this.cleanName(m.nombre, 'city');
                     return cleanedMuniName && cleanedMuniName.includes(searchNameCleaned);
                 });
-                if (matchedMunicipality) {
+                if (matchedMunicipalityObj) {
                     break;
                 }
             }
         }
       }
 
-      if (matchedMunicipality) {
-        municipalityIdToSet = matchedMunicipality.id;
+      if (matchedMunicipalityObj) {
+        municipalityIdToSet = matchedMunicipalityObj.id;
       } else {
         municipalityIdToSet = null;
       }
 
-      this.selectedProvinceForDropdown = provinceIdToSet;
-      this.selectedCityForDropdown = municipalityIdToSet;
+      await this.locationDropdowns.setDropdownValues(provinceIdToSet, municipalityIdToSet, true);
 
       this.restaurantForm.patchValue({
         address: {
           street: georefDireccion.calle?.nombre || '',
           number: georefDireccion.altura?.valor !== undefined && georefDireccion.altura.valor !== null ? String(georefDireccion.altura.valor) : null,
-          province: provinceIdToSet,
-          city: municipalityIdToSet
         }
       }, { emitEvent: false });
 
       this.toggleAddressFields(!!municipalityIdToSet);
 
+      const currentZoom = this.locationPicker?.map?.getZoom() || 15;
+
       if (georefDireccion.ubicacion && (georefDireccion.ubicacion.lat !== event.lat || georefDireccion.ubicacion.lon !== event.lng)) {
-          this.locationPicker.setMapCenterAndMarker(georefDireccion.ubicacion.lat, georefDireccion.ubicacion.lon, 17);
+          this.locationPicker.setMapCenterAndMarker(georefDireccion.ubicacion.lat, georefDireccion.ubicacion.lon, currentZoom);
       } else {
-          this.locationPicker.setMapCenterAndMarker(event.lat, event.lng, 17);
+          this.locationPicker.setMapCenterAndMarker(event.lat, event.lng, currentZoom);
       }
 
       this.successMessage = 'Ubicación actualizada desde el mapa.';
@@ -481,8 +499,10 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
     } catch (err: any) {
       this.handleError('Error en la obtención de dirección inversa desde GeoRef', err);
       this.clearAddressFields();
-      this.selectedProvinceForDropdown = null;
-      this.selectedCityForDropdown = null;
+      await this.locationDropdowns.setDropdownValues(null, null, false);
+      this.currentProvinceId = null;
+      this.currentCityId = null;
+      this.currentMunicipalityDetails = null;
       this.toggleAddressFields(false);
       this.formListenersActive = true;
       this.restaurantForm.updateValueAndValidity();
@@ -490,79 +510,85 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
   }
 
   private geocodeManualAddress(): void {
-    const { street, number, province, city } = this.restaurantForm.get('address')?.getRawValue();
+    const { street, number } = this.restaurantForm.get('address')?.getRawValue();
 
-    const selectedProvince = this.allProvinces.find(p => p.id === province);
-    let selectedMunicipality: GeorefMunicipality | undefined;
+    const selectedProvince = this.allProvinces.find(p => p.id === this.currentProvinceId);
+    let selectedMunicipality = this.currentMunicipalityDetails;
+    if (!selectedMunicipality && this.currentCityId && this.locationDropdowns.municipalities.length > 0) {
+        selectedMunicipality = this.locationDropdowns.municipalities.find(m => m.id === this.currentCityId) || null;
+    }
 
-    this.georefService.getMunicipalitiesByProvinceId(province).pipe(
-        catchError(error => {
-            this.handleError('Error al buscar municipios para geocodificación manual.', error);
+    if (street && number && selectedProvince && selectedMunicipality && this.formListenersActive && this.locationPicker) {
+      this.isLoading = true;
+
+      const selectedProvinceName = selectedProvince.nombre;
+      const selectedMunicipalityName = selectedMunicipality.nombre;
+
+      this.subscriptions.add(
+        this.georefService.buscarDireccion(street, number, selectedProvinceName, selectedMunicipalityName).pipe(
+          catchError(error => {
+            this.errorMessage = 'Error al buscar la dirección en el mapa.';
+            this.isLoading = false;
             return of([]);
+          })
+        ).subscribe((direcciones: GeorefDireccion[] | null) => {
+          this.isLoading = false;
+          if (direcciones && direcciones.length > 0) {
+            const primeraDireccion = direcciones[0];
+            const lat = primeraDireccion.ubicacion?.lat;
+            const lon = primeraDireccion.ubicacion?.lon;
+
+            if (lat !== undefined && lon !== undefined && lat !== null && lon !== null) {
+              this.formListenersActive = false;
+              if (this.restaurantForm.get('address.latitude')?.value !== lat || this.restaurantForm.get('address.longitude')?.value !== lon) {
+                this.restaurantForm.get('address.latitude')?.setValue(lat, { emitEvent: false });
+                this.restaurantForm.get('address.longitude')?.setValue(lon, { emitEvent: false });
+              }
+              this.formListenersActive = true;
+              const currentZoom = this.locationPicker?.map?.getZoom() || 15;
+              this.locationPicker.setMapCenterAndMarker(lat, lon, currentZoom);
+              this.successMessage = 'Mapa actualizado con la dirección del formulario.';
+            } else {
+              this.errorMessage = 'Dirección encontrada pero sin coordenadas válidas.';
+            }
+          } else {
+            this.errorMessage = 'No se encontró una dirección precisa para los datos ingresados.';
+          }
         })
-    ).subscribe(municipalities => {
-        selectedMunicipality = municipalities.find(m => m.id === city);
+      );
+    }
+  }
 
-        if (street && number && selectedProvince && selectedMunicipality && this.formListenersActive && this.locationPicker) {
-            this.isLoading = true;
-
-            const selectedProvinceName = selectedProvince.nombre;
-            const selectedMunicipalityName = selectedMunicipality.nombre;
-
-            this.subscriptions.add(
-                this.georefService.buscarDireccion(street, number, selectedProvinceName, selectedMunicipalityName).pipe(
-                    catchError(error => {
-                        this.errorMessage = 'Error al buscar la dirección en el mapa.';
-                        this.isLoading = false;
-                        return of([]);
-                    })
-                ).subscribe((direcciones: GeorefDireccion[] | null) => {
-                    this.isLoading = false;
-                    if (direcciones && direcciones.length > 0) {
-                        const primeraDireccion = direcciones[0];
-                        const lat = primeraDireccion.ubicacion?.lat;
-                        const lon = primeraDireccion.ubicacion?.lon;
-
-                        if (lat !== undefined && lon !== undefined && lat !== null && lon !== null) {
-                            this.formListenersActive = false;
-                            if (this.restaurantForm.get('address.latitude')?.value !== lat || this.restaurantForm.get('address.longitude')?.value !== lon) {
-                                this.restaurantForm.get('address.latitude')?.setValue(lat, { emitEvent: false });
-                                this.restaurantForm.get('address.longitude')?.setValue(lon, { emitEvent: false });
-                            }
-                            this.formListenersActive = true;
-                            this.locationPicker.setMapCenterAndMarker(lat, lon);
-                            this.successMessage = 'Mapa actualizado con la dirección del formulario.';
-                        } else {
-                            this.errorMessage = 'Dirección encontrada pero sin coordenadas válidas.';
-                        }
-                    } else {
-                        this.errorMessage = 'No se encontró una dirección precisa para los datos ingresados.';
-                    }
-                })
-            );
-        }
+  private resetDependentFields(fields: ('province' | 'city')[]): void {
+    this.formListenersActive = false;
+    fields.forEach(field => {
+      const control = this.restaurantForm.get(`address.${field}`);
+      if (control) {
+        control.reset(null, { emitEvent: false });
+      }
+      if (field === 'city') {
+        this.restaurantForm.get('address.latitude')?.reset(null, { emitEvent: false });
+        this.restaurantForm.get('address.longitude')?.reset(null, { emitEvent: false });
+      }
     });
+    this.formListenersActive = true;
   }
 
   onSubmit(): void {
     this.errorMessage = null;
     this.successMessage = null;
 
-    if (this.restaurantForm.invalid) {
-      this.errorMessage = 'Por favor complete todos los campos obligatorios correctamente.';
+    if (this.restaurantForm.invalid || !this.currentProvinceId || !this.currentCityId) {
+      this.errorMessage = 'Por favor complete todos los campos obligatorios correctamente, incluyendo la ubicación.';
       this.markFormGroupTouched(this.restaurantForm);
       return;
     }
 
     const formValue = this.restaurantForm.getRawValue() as RestaurantFormValue;
 
-    const selectedProvince = this.allProvinces.find(p => p.id === formValue.address.province);
-    
-    let selectedMunicipality: GeorefMunicipality | undefined;
-    if (formValue.address.city && this.locationDropdowns.municipalities) {
-      selectedMunicipality = this.locationDropdowns.municipalities.find(m => m.id === formValue.address.city);
-    }
-    
+    const selectedProvince = this.allProvinces.find(p => p.id === this.currentProvinceId);
+    const selectedMunicipality = this.currentMunicipalityDetails;
+
     if (!selectedProvince || !selectedMunicipality ||
       formValue.address.latitude === null || formValue.address.longitude === null) {
       this.errorMessage = 'Error en la selección de ubicación o coordenadas. Por favor, asegúrese de que la dirección está completa y las coordenadas están en el mapa.';
@@ -649,6 +675,22 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
     }, { emitEvent: false });
   }
 
+  private async clearLocationDropdowns(level: ('province' | 'city' | 'all')): Promise<void> {
+    this.formListenersActive = false;
+    if (level === 'all' || level === 'province') {
+      await this.locationDropdowns.setDropdownValues(null, null, false);
+    } else if (level === 'city' && this.locationDropdowns.selectedProvinceId) {
+      await this.locationDropdowns.setDropdownValues(this.locationDropdowns.selectedProvinceId, null, false);
+    } else if (level === 'city') {
+        await this.locationDropdowns.setDropdownValues(null, null, false);
+    }
+    this.currentProvinceId = this.locationDropdowns.selectedProvinceId;
+    this.currentCityId = this.locationDropdowns.selectedCityId;
+    this.currentMunicipalityDetails = null;
+    this.formListenersActive = true;
+    this.restaurantForm.updateValueAndValidity();
+  }
+
   private async loadRestaurantData(id: number): Promise<void> {
     this.isLoading = true;
     try {
@@ -658,50 +700,35 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
         const cityIdFromDb = String(restaurant.address.cityId);
         let foundMunicipality: GeorefMunicipality | undefined;
         let foundProvinceId: string | null = null;
-        
-        // Cargar todos los municipios para la lógica de coincidencia
-        this.allMunicipalitiesForMatching = await firstValueFrom(this.georefService.getMunicipalities().pipe(
-            catchError(error => {
-                this.handleError('Error al cargar todos los municipios para edición.', error);
-                return of([]);
-            })
-        ));
 
-        foundMunicipality = this.allMunicipalitiesForMatching.find(m => m.id === cityIdFromDb);
+        const provinceFromDb = this.allProvinces.find(p =>
+            this.cleanName(p.nombre, 'province')?.toLowerCase() === this.cleanName(restaurant.address.province, 'province')?.toLowerCase()
+        );
 
-        if (foundMunicipality) {
-            foundProvinceId = foundMunicipality.provincia.id;
-        } else {
-            const cleanedCityName = this.cleanName(restaurant.address.city, 'city');
-            const cleanedProvinceName = this.cleanName(restaurant.address.province, 'province');
+        if (provinceFromDb) {
+            foundProvinceId = provinceFromDb.id;
+            const municipalitiesForProvince = await firstValueFrom(this.georefService.getMunicipalitiesByProvinceId(provinceFromDb.id));
+            foundMunicipality = municipalitiesForProvince.find(m => m.id === cityIdFromDb);
 
-            const provinceFromDb = this.allProvinces.find(p =>
-                this.cleanName(p.nombre, 'province')?.toLowerCase() === cleanedProvinceName?.toLowerCase()
-            );
-
-            if (provinceFromDb) {
-                const municipalitiesForProvince = await firstValueFrom(this.georefService.getMunicipalitiesByProvinceId(provinceFromDb.id));
+            if (!foundMunicipality) {
+                const cleanedCityName = this.cleanName(restaurant.address.city, 'city');
                 foundMunicipality = municipalitiesForProvince.find(
                     m => this.cleanName(m.nombre, 'city')?.toLowerCase() === cleanedCityName?.toLowerCase()
                 );
-                if (foundMunicipality) {
-                    foundProvinceId = provinceFromDb.id;
-                } else if (cleanedCityName === cleanedProvinceName) {
-                    foundMunicipality = municipalitiesForProvince.find(
-                        m => this.cleanName(m.nombre, 'city')?.toLowerCase() === 'capital' ||
-                             this.cleanName(m.nombre, 'city')?.toLowerCase() === cleanedProvinceName ||
-                             this.cleanName(m.nombre, 'city')?.toLowerCase() === `ciudad de ${cleanedProvinceName}`
-                    );
-                    if (foundMunicipality) {
-                        foundProvinceId = provinceFromDb.id;
-                    }
-                }
+            }
+            if (!foundMunicipality && this.cleanName(restaurant.address.city, 'city') === this.cleanName(restaurant.address.province, 'province')) {
+                foundMunicipality = municipalitiesForProvince.find(
+                    m => this.cleanName(m.nombre, 'city')?.toLowerCase() === 'capital' ||
+                         this.cleanName(m.nombre, 'city')?.toLowerCase() === this.cleanName(provinceFromDb.nombre, 'province')
+                );
             }
         }
 
-        this.selectedProvinceForDropdown = foundProvinceId;
-        this.selectedCityForDropdown = foundMunicipality ? foundMunicipality.id : null;
-        this.forceLoadMunicipalitiesForDropdown = true; 
+        await this.locationDropdowns.setDropdownValues(foundProvinceId, foundMunicipality ? foundMunicipality.id : null, false);
+
+        this.currentProvinceId = this.locationDropdowns.selectedProvinceId;
+        this.currentCityId = this.locationDropdowns.selectedCityId;
+        this.currentMunicipalityDetails = foundMunicipality || null;
 
         this.restaurantForm.patchValue({
             name: restaurant.name,
@@ -710,8 +737,8 @@ export class AddRestaurantComponent implements OnInit, OnDestroy, AfterViewInit 
             address: {
                 street: restaurant.address.street,
                 number: restaurant.address.number,
-                province: foundProvinceId,
-                city: foundMunicipality ? foundMunicipality.id : null,
+                province: this.currentProvinceId,
+                city: this.currentCityId,
                 latitude: restaurant.address.location.lat,
                 longitude: restaurant.address.location.lng
             }

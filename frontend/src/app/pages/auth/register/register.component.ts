@@ -1,9 +1,9 @@
-// src/app/register/register.component.ts
 import { Component, OnInit } from '@angular/core';
 import { FormBuilder, FormGroup, Validators, ReactiveFormsModule, FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import { HttpClient, HttpClientModule } from '@angular/common/http';
 import { lastValueFrom } from 'rxjs';
+import { Router } from '@angular/router';
 import { LocationDropdownsComponent } from '../../../shared/location-dropdowns/location-dropdowns.component';
 
 @Component({
@@ -18,14 +18,14 @@ export class RegisterComponent implements OnInit {
   registrationSuccess = false;
   registrationError: string | null = null;
 
-  constructor(private fb: FormBuilder, private http: HttpClient) {
+  constructor(private fb: FormBuilder, private http: HttpClient, private router: Router) {
     this.registerForm = this.fb.group({
       name: ['', Validators.required],
       email: ['', [Validators.required, Validators.email]],
       password: ['', [Validators.required, Validators.minLength(6)]],
       confirmPassword: ['', Validators.required],
-      provinceId: [null as string | null, Validators.required], // Valor inicial nulo
-      cityId: [null as string | null, Validators.required]     // Valor inicial nulo
+      provinceId: [null as string | null, Validators.required],
+      cityId: [null as string | null, Validators.required]
     }, { validators: this.passwordMatchValidator });
   }
 
@@ -38,13 +38,8 @@ export class RegisterComponent implements OnInit {
   }
 
   onProvinceChanged(provinceId: string | null): void {
-    // Al recibir un cambio de provincia del dropdown, actualizamos el FormControl
-    // con { emitEvent: false } para evitar que el 'valueChanges' del formulario padre
-    // provoque un ciclo de re-evaluación innecesario que afecte al hijo.
     this.registerForm.get('provinceId')?.setValue(provinceId, { emitEvent: false });
-    this.registerForm.get('cityId')?.setValue(null, { emitEvent: false }); // Siempre resetear la ciudad
-    // Luego de actualizar los controles, marcamos los controles como dirty/touched
-    // para que las validaciones y mensajes de error se muestren correctamente si es necesario.
+    this.registerForm.get('cityId')?.setValue(null, { emitEvent: false });
     this.registerForm.get('provinceId')?.markAsDirty();
     this.registerForm.get('provinceId')?.markAsTouched();
     this.registerForm.get('cityId')?.markAsDirty();
@@ -52,7 +47,6 @@ export class RegisterComponent implements OnInit {
   }
 
   onCityChanged(cityId: string | null): void {
-    // Similarmente, al recibir un cambio de ciudad, actualizamos con { emitEvent: false }
     this.registerForm.get('cityId')?.setValue(cityId, { emitEvent: false });
     this.registerForm.get('cityId')?.markAsDirty();
     this.registerForm.get('cityId')?.markAsTouched();
@@ -80,9 +74,11 @@ export class RegisterComponent implements OnInit {
       this.registerForm.reset();
       this.registerForm.markAsUntouched();
       this.registerForm.markAsPristine();
-      // Aseguramos que los valores del formulario queden en nulo para que el dropdown vuelva a su estado inicial.
       this.registerForm.get('provinceId')?.setValue(null, { emitEvent: false });
       this.registerForm.get('cityId')?.setValue(null, { emitEvent: false });
+      
+      // CAMBIO CLAVE AQUÍ: Asumiendo que el módulo Auth se carga en /auth
+      this.router.navigate(['/auth/login']); 
     } catch (error: any) {
       console.error('Error en el registro:', error);
       this.registrationError = error.error?.message || 'Hubo un error al intentar registrar el usuario. Por favor, intente de nuevo.';

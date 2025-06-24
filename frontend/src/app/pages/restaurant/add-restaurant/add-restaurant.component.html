@@ -52,16 +52,16 @@
 
         <fieldset formGroupName="address" class="address-fieldset no-border">
           <legend class="fieldset-legend">Ubicación</legend>
-          
+
           <app-location-dropdowns
-            [selectedProvinceId]="selectedProvinceForDropdown"
-            [selectedCityId]="selectedCityForDropdown"
-            [forceLoadMunicipalities]="forceLoadMunicipalitiesForDropdown"
-            (provinceChange)="onProvinceSelected($event)"
-            (cityChange)="onCitySelected($event)"
+            [selectedProvinceId]="currentProvinceId"
+            [selectedCityId]="currentCityId"
+            (provinceChange)="onDropdownProvinceChange($event)"
+            (cityChange)="onDropdownCityChange($event)"
+            (cityDetailsSelected)="onCityDetailsSelected($event)"
             (provincesLoaded)="onProvincesLoaded($event)"
           ></app-location-dropdowns>
-          
+
           <div *ngIf="restaurantForm.get('address.province')?.invalid && (restaurantForm.get('address.province')?.dirty || restaurantForm.get('address.province')?.touched)" class="form-error-message">
             <div *ngIf="restaurantForm.get('address.province')?.errors?.['required']">La provincia es obligatoria.</div>
           </div>
@@ -112,6 +112,9 @@
           <label class="form-label">Seleccione ubicación en el mapa</label>
           <div class="map-container">
             <app-location-picker
+              [initialLat]="restaurantForm.get('address.latitude')?.value"
+              [initialLng]="restaurantForm.get('address.longitude')?.value"
+              [initialZoom]="15"
               (locationSelected)="onLocationSelected($event)"
             ></app-location-picker>
           </div>

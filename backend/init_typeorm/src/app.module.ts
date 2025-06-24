@@ -8,6 +8,8 @@ import { RestaurantModule } from './restaurants/restaurants.module';
 import { MenuModule } from './menus/menus.module';
 import { AuthModule } from './auth/auth.module';
 import { UserEntity } from './entities/user/user.entity';
+import { Restaurant } from './entities/restaurant/restaurant.entity';
+import { Menu } from './entities/menu/menu.entity';
 
 @Module({
   imports: [
@@ -18,14 +20,14 @@ import { UserEntity } from './entities/user/user.entity';
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: async (configService: ConfigService) => ({
+      useFactory: (configService: ConfigService) => ({
         type: 'postgres',
         host: configService.get<string>('DB_HOST'),
         port: parseInt(configService.get<string>('DB_PORT') as string, 10) || 5432,
         username: configService.get<string>('DB_USERNAME'),
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE'),
-        entities: [UserEntity, RestaurantModule, MenuModule],
+        entities: [UserEntity, Restaurant, Menu],
         synchronize: configService.get<string>('DB_SYNCHRONIZE') === 'true',
         logging: true,
       }),
